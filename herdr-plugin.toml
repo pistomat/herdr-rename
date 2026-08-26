@@ -1,0 +1,35 @@
+id = "dev.pistomat.rename-sync"
+name = "Rename Sync"
+description = "Propagate a Claude or Codex session name onto the herdr agent, workspace, and outer terminal tab title"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["python3", "sync.py"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["python3", "sync.py"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "sync.py"]
+
+[[events]]
+on = "pane.focused"
+command = ["python3", "sync.py"]
+
+[[events]]
+on = "workspace.focused"
+command = ["python3", "sync.py"]
+
+[[events]]
+on = "tab.focused"
+command = ["python3", "sync.py"]
+
+[[actions]]
+id = "sync-now"
+title = "Sync names now"
+contexts = ["workspace"]
+command = ["python3", "sync.py"]

@@ -121,19 +121,6 @@ def slugify(name: str) -> str:
     return slug.rstrip("-_")
 
 
-def load_state(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def save_state(path: Path, state: dict) -> None:
-    if DRY_RUN:
-        return
-    path.write_text(json.dumps(state, indent=1), encoding="utf-8")
-
-
 def chosen_name_for(agent: dict, names_by_kind: dict) -> str:
     session = agent.get("agent_session") or {}
     session_id = session.get("value")
@@ -156,28 +143,24 @@ def sync_agent_names(agents: list, names_by_kind: dict) -> dict:
         workspace_id = agent.get("workspace_id")
         is_root_pane = agent.get("pane_id", "").endswith(":p1")
         if workspace_id and (workspace_id not in desired or is_root_pane):
-            desired[workspace_id] = (name, agent.get("cwd") or "")
+            desired[workspace_id] = name
     return desired
 
 
-def sync_workspace_labels(workspaces: list, desired: dict, written: dict) -> dict:
-    """Rename workspaces whose label is still the default or our own previous write."""
+def sync_workspace_labels(workspaces: list, desired: dict) -> dict:
+    """Rename each workspace to match its agent's currently chosen name.
+
+    The chosen session name always wins, including over a label set by hand
+    through `herdr workspace rename` — the plugin's whole point is that
+    renaming the session is the one place you need to do that.
+    """
     labels = {workspace["workspace_id"]: workspace["label"] for workspace in workspaces}
     for workspace in workspaces:
         workspace_id = workspace["workspace_id"]
-        target = desired.get(workspace_id)
-        if not target:
-            continue
-        name, cwd = target
-        current = workspace["label"]
-        if current == name:
-            written[workspace_id] = name
-            continue
-        default_label = os.path.basename(cwd.rstrip("/"))
-        if current != default_label and current != written.get(workspace_id):
+        name = desired.get(workspace_id)
+        if not name or workspace["label"] == name:
             continue
         if herdr_mutate("workspace", "rename", workspace_id, name):
-            written[workspace_id] = name
             labels[workspace_id] = name
     return labels
 
@@ -208,10 +191,6 @@ def main() -> int:
     except OSError:
         return 0
 
-    state_path = directory / "state.json"
-    state = load_state(state_path)
-    written = state.setdefault("workspace_labels", {})
-
     try:
         agents = herdr("agent", "list")["result"]["agents"]
         workspaces = herdr("workspace", "list")["result"]["workspaces"]
@@ -221,12 +200,8 @@ def main() -> int:
 
     names_by_kind = {"claude": claude_session_names(), "codex": codex_session_names()}
     desired = sync_agent_names(agents, names_by_kind)
-    labels = sync_workspace_labels(workspaces, desired, written)
+    labels = sync_workspace_labels(workspaces, desired)
     sync_window_title(workspaces, labels)
-
-    live = {workspace["workspace_id"] for workspace in workspaces}
-    state["workspace_labels"] = {k: v for k, v in written.items() if k in live}
-    save_state(state_path, state)
     return 0
 
 

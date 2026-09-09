@@ -73,12 +73,12 @@ The tab title prefix is the short hostname, so a box named `rewind` produces
 `rewind: <name>`. The title is per attached client and tracks the focused workspace, so
 switching spaces updates it.
 
-### Not clobbering manual names
+### The session name always wins
 
-A workspace is renamed only when its current label is either the default (the root pane's
-directory basename) or a label this plugin wrote earlier. Rename a space by hand and the
-plugin leaves it alone from then on. Previous writes are tracked in
-`$HERDR_PLUGIN_STATE_DIR/state.json`.
+The workspace label and the agent name both follow the session's current chosen name,
+even if you renamed the workspace by hand with `herdr workspace rename`. Rename the
+session again in Claude Code or Codex, and it overwrites that too — one source of truth,
+no separate state to track or lose.
 
 ## Development
 

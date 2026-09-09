@@ -1,7 +1,7 @@
 id = "dev.pistomat.rename-sync"
 name = "Rename Sync"
 description = "Propagate a Claude or Codex session name onto the herdr agent, workspace, and outer terminal tab title"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.8.0"
 platforms = ["macos", "linux"]
 

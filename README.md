@@ -20,6 +20,26 @@ herdr plugin install pistomat/herdr-rename
 
 Requires herdr 0.8.0+ and `python3` (stdlib only, no dependencies).
 
+## Multi-machine setup
+
+This plugin runs on the herdr **server**, not the client. In herdr's
+single-client/multi-remote-server model (0.9.0+), one client can attach to
+several `herdr machine`-registered boxes, but herdr does not copy plugins,
+config, or executables over SSH — each server keeps its own plugin store. If
+you only run the install command above on your local machine, agents on
+remote boxes keep their default names.
+
+Install the plugin on every box that runs Claude Code or Codex sessions:
+
+```bash
+./install-remote.sh
+```
+
+This installs locally, then SSHes into every enabled `herdr machine` and
+installs it there too. It skips (and warns about) any box whose `herdr`
+client is older than its server — run `herdr update` on that box first, since
+an outdated client can't run plugin commands against a newer server.
+
 ## Unpin your terminal tab titles
 
 Ghostty's **Change Tab Title…** command sets a manual override that ignores every title

@@ -19,13 +19,6 @@ AGENT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 DRY_RUN = "--dry-run" in sys.argv
 
 
-def state_dir() -> Path:
-    configured = os.environ.get("HERDR_PLUGIN_STATE_DIR")
-    if configured:
-        return Path(configured)
-    return Path.home() / ".local" / "state" / "herdr" / "plugins" / PLUGIN_ID
-
-
 def log(message: str) -> None:
     print(message, file=sys.stderr)
 
@@ -46,7 +39,7 @@ def herdr_mutate(*args: str) -> bool:
     try:
         herdr(*args)
         return True
-    except (RuntimeError, json.JSONDecodeError, subprocess.SubprocessError) as error:
+    except (OSError, RuntimeError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         log(f"skipped: {error}")
         return False
 
@@ -55,9 +48,8 @@ def api_call(method: str, params: dict) -> dict:
     socket_path = os.environ.get("HERDR_SOCKET_PATH")
     if not socket_path:
         raise RuntimeError("HERDR_SOCKET_PATH is not set")
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(2)
-    try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(2)
         client.connect(socket_path)
         request = {"id": f"{PLUGIN_ID}:1", "method": method, "params": params}
         client.sendall((json.dumps(request) + "\n").encode())
@@ -67,16 +59,12 @@ def api_call(method: str, params: dict) -> dict:
             if not chunk:
                 break
             buffer += chunk
-    finally:
-        client.close()
     return json.loads(buffer.decode().split("\n", 1)[0])
 
 
 def claude_session_names() -> dict:
     """Map Claude session id to the name the user chose, skipping auto-derived names."""
     names = {}
-    if not CLAUDE_SESSIONS_DIR.is_dir():
-        return names
     for path in CLAUDE_SESSIONS_DIR.glob("*.json"):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
@@ -99,9 +87,6 @@ def codex_session_names() -> dict:
     except OSError:
         return names
     for line in lines:
-        line = line.strip()
-        if not line:
-            continue
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
@@ -121,20 +106,12 @@ def slugify(name: str) -> str:
     return slug.rstrip("-_")
 
 
-def chosen_name_for(agent: dict, names_by_kind: dict) -> str:
-    session = agent.get("agent_session") or {}
-    session_id = session.get("value")
-    kind = agent.get("agent")
-    if not session_id or kind not in names_by_kind:
-        return ""
-    return names_by_kind[kind].get(session_id, "")
-
-
 def sync_agent_names(agents: list, names_by_kind: dict) -> dict:
     """Rename each user-named agent and return the desired label per workspace."""
     desired = {}
     for agent in agents:
-        name = chosen_name_for(agent, names_by_kind)
+        session_id = (agent.get("agent_session") or {}).get("value")
+        name = names_by_kind.get(agent.get("agent"), {}).get(session_id, "") if session_id else ""
         if not name:
             continue
         slug = slugify(name)
@@ -147,30 +124,23 @@ def sync_agent_names(agents: list, names_by_kind: dict) -> dict:
     return desired
 
 
-def sync_workspace_labels(workspaces: list, desired: dict) -> dict:
-    """Rename each workspace to match its agent's currently chosen name.
-
-    The chosen session name always wins, including over a label set by hand
-    through `herdr workspace rename` — the plugin's whole point is that
-    renaming the session is the one place you need to do that.
-    """
-    labels = {workspace["workspace_id"]: workspace["label"] for workspace in workspaces}
+def sync_workspace_labels(workspaces: list, desired: dict) -> None:
+    """The chosen session name always wins, including over manually set labels."""
     for workspace in workspaces:
         workspace_id = workspace["workspace_id"]
         name = desired.get(workspace_id)
         if not name or workspace["label"] == name:
             continue
         if herdr_mutate("workspace", "rename", workspace_id, name):
-            labels[workspace_id] = name
-    return labels
+            workspace["label"] = name
 
 
-def sync_window_title(workspaces: list, labels: dict) -> None:
+def sync_window_title(workspaces: list) -> None:
     """Set the outer terminal tab title to '<host>: <focused workspace label>'."""
     focused = next((w for w in workspaces if w.get("focused")), None)
     if not focused:
         return
-    label = labels.get(focused["workspace_id"], focused["label"])
+    label = focused["label"]
     title = f"{socket.gethostname().split('.')[0]}: {label}"
     if DRY_RUN:
         log(f"dry-run: client.window_title.set {title!r}")
@@ -182,7 +152,8 @@ def sync_window_title(workspaces: list, labels: dict) -> None:
 
 
 def main() -> int:
-    directory = state_dir()
+    directory = Path(os.environ.get("HERDR_PLUGIN_STATE_DIR") or
+                     Path.home() / ".local/state/herdr/plugins" / PLUGIN_ID)
     directory.mkdir(parents=True, exist_ok=True)
 
     lock_file = open(directory / "sync.lock", "w")
@@ -194,14 +165,14 @@ def main() -> int:
     try:
         agents = herdr("agent", "list")["result"]["agents"]
         workspaces = herdr("workspace", "list")["result"]["workspaces"]
-    except (RuntimeError, KeyError, json.JSONDecodeError) as error:
+    except (OSError, RuntimeError, KeyError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         log(f"herdr state unavailable: {error}")
         return 0
 
     names_by_kind = {"claude": claude_session_names(), "codex": codex_session_names()}
     desired = sync_agent_names(agents, names_by_kind)
-    labels = sync_workspace_labels(workspaces, desired)
-    sync_window_title(workspaces, labels)
+    sync_workspace_labels(workspaces, desired)
+    sync_window_title(workspaces)
     return 0
 
 
